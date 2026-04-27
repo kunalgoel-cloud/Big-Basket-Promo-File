@@ -8,11 +8,11 @@ st.set_page_config(page_title="BB Promo Architect", layout="wide")
 
 # --- BIG BASKET TEMPLATE CONSTANTS ---
 BB_HEADERS = [
-    'Code', 'Product Description', 'Start Date (DD-MM-YYYY)', 'End Date (DD-MM-YYYY)', 
-    'Discount Type', 'Discount Value', 'Redemption Limit - Qty Per Campaign', 'Pan India', 
-    'ANDHRA PRADESH', 'TELANGANA', 'ASSAM', 'BIHAR', 'CHHATTISGARH', 'GUJARAT', 
-    'HARYANA_DELHI&GURGAON', 'JHARKHAND', 'KARNATAKA', 'KERALA', 'MADHYA PRADESH', 
-    'MAHARASHTRA - Mumbai', 'MAHARASHTRA - Pune', 'ORISSA', 'PUNJAB', 'RAJASTHAN', 
+    'Code', 'Product Description', 'Start Date (DD-MM-YYYY)', 'End Date (DD-MM-YYYY)',
+    'Discount Type', 'Discount Value', 'Redemption Limit - Qty Per Campaign', 'Pan India',
+    'ANDHRA PRADESH', 'TELANGANA', 'ASSAM', 'BIHAR', 'CHHATTISGARH', 'GUJARAT',
+    'HARYANA_DELHI&GURGAON', 'JHARKHAND', 'KARNATAKA', 'KERALA', 'MADHYA PRADESH',
+    'MAHARASHTRA - Mumbai', 'MAHARASHTRA - Pune', 'ORISSA', 'PUNJAB', 'RAJASTHAN',
     'TAMIL NADU', 'UTTAR PRADESH_Noida', 'WEST BENGAL'
 ]
 
@@ -44,8 +44,11 @@ with st.sidebar:
 
 if inv_file:
     df_inv = pd.read_csv(inv_file)
+    # Coerce inventory metric columns to numeric; NaN → 0 so comparisons don't TypeError
+    df_inv['str'] = pd.to_numeric(df_inv['str'], errors='coerce').fillna(0)
+    df_inv['doc'] = pd.to_numeric(df_inv['doc'], errors='coerce').fillna(0)
     unique_locations = df_inv['location'].unique()
-    
+
     # --- Step 2: Editable DC to State Mapping ---
     st.subheader("Step 1: Map Locations to BB State Columns")
     with st.expander("Edit Location Mapping", expanded=True):
@@ -55,7 +58,7 @@ if inv_file:
                 "Inventory Location": loc,
                 "BB State Column": DEFAULT_MAP.get(loc, "KARNATAKA") # Defaulting to Karnataka if unknown
             })
-        
+
         # Editable data editor
         edited_map_df = st.data_editor(
             pd.DataFrame(map_data),
@@ -76,7 +79,7 @@ if inv_file:
     st.divider()
     st.subheader("Step 2: Enter SKU Level Target Prices")
     unique_products = df_inv[['channel_sku', 'master_sku']].drop_duplicates()
-    
+
     with st.form("price_entry"):
         sku_prices = {}
         h = st.columns([2, 1, 1, 1, 1])
@@ -95,7 +98,7 @@ if inv_file:
             p3 = r[3].number_input("Wek", key=f"wek_{sid}", label_visibility="collapsed")
             p4 = r[4].number_input("Liq", key=f"liq_{sid}", label_visibility="collapsed")
             sku_prices[sid] = {'BAU': p1, 'SVD': p2, 'Weekend': p3, 'Liq': p4}
-        
+
         generate = st.form_submit_button("Generate BB Upload File")
 
     # --- Step 4: Logic & File Generation ---
@@ -103,25 +106,25 @@ if inv_file:
         num_days = calendar.monthrange(year, month)[1]
         start_dt = date(year, month, 1)
         end_dt = date(year, month, num_days)
-        
+
         final_rows = []
 
         for sku in unique_products['channel_sku'].unique():
             sku_inv = df_inv[df_inv['channel_sku'] == sku]
             sku_name = sku_inv['master_sku'].iloc[0]
-            
+
             # Temporary storage to group days
             day_by_day = []
-            
+
             # Loop through every day of the month
             curr = start_dt
             while curr <= end_dt:
                 is_svd_day = curr.day <= 10
                 is_weekend = curr.weekday() >= 5
-                
+
                 # For each price point, see which states qualify
                 price_points = sku_prices[sku]
-                
+
                 for p_type, p_val in price_points.items():
                     active_states = []
                     for _, row in sku_inv.iterrows():
@@ -130,10 +133,10 @@ if inv_file:
                         if row['str'] < 0.20 and row['doc'] > 90: cat = 'Liq'
                         elif row['str'] > 0.20 and row['doc'] > 90: cat = 'SVD' if is_svd_day else 'BAU'
                         elif row['str'] < 0.20 and row['doc'] < 90: cat = 'Weekend' if is_weekend else 'BAU'
-                        
+
                         if cat == p_type:
                             active_states.append(FINAL_MAP.get(row['location']))
-                    
+
                     if active_states:
                         day_by_day.append({
                             'Date': curr,
@@ -147,19 +150,19 @@ if inv_file:
                 grouped = []
                 entry = day_by_day[0]
                 start = entry['Date']
-                
+
                 for i in range(1, len(day_by_day)):
                     prev = day_by_day[i-1]
                     nxt = day_by_day[i]
-                    
+
                     # If price or state list changes, or gap in dates, break the range
-                    if (nxt['Price'] != prev['Price'] or 
-                        nxt['States'] != prev['States'] or 
+                    if (nxt['Price'] != prev['Price'] or
+                        nxt['States'] != prev['States'] or
                         nxt['Date'] != prev['Date'] + timedelta(days=1)):
-                        
+
                         grouped.append({'s': start, 'e': prev['Date'], 'p': prev['Price'], 'st': prev['States']})
                         start = nxt['Date']
-                
+
                 grouped.append({'s': start, 'e': day_by_day[-1]['Date'], 'p': day_by_day[-1]['Price'], 'st': day_by_day[-1]['States']})
 
                 # Create the final BB Format rows
@@ -172,7 +175,7 @@ if inv_file:
                     out_row['Discount Type'] = 'fixed'
                     out_row['Discount Value'] = g['p']
                     out_row['Pan India'] = 'No'
-                    for s in g['st']: 
+                    for s in g['st']:
                         if s in out_row: out_row[s] = 'Yes'
                     final_rows.append(out_row)
 
